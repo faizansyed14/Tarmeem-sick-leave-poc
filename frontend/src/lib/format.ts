@@ -88,6 +88,7 @@ export const ACTION_LABELS: Record<string, string> = {
   otp_resent: "Code resent",
   otp_failed: "Incorrect code",
   leave_verified: "Certificate verified",
+  sheet_sent: "Sheet emailed",
   customer_created: "Customer added",
   customer_updated: "Customer updated",
   data_exported: "Data exported",

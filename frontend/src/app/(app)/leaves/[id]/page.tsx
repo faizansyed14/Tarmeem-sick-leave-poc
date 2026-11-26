@@ -14,6 +14,7 @@ import {
   PhoneCall,
   RotateCw,
   Search,
+  Send,
   ShieldAlert,
   UserPlus,
   UserRoundSearch,
@@ -660,6 +661,7 @@ function VerificationPanel({
           <Row label="Verified on" value={fmtDateTime(leave.verified_at)} />
           <Row label="Code sent to" value={otp?.sent_to ?? ""} />
         </dl>
+        <SendSheet leave={leave} onUpdate={onUpdate} />
       </Card>
     );
   }
@@ -761,6 +763,69 @@ function VerificationPanel({
         )}
       </div>
     </Card>
+  );
+}
+
+function SendSheet({ leave, onUpdate }: { leave: LeaveDetail; onUpdate: (l: LeaveDetail) => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const digits = (s: string | null | undefined) => (s ?? "").replace(/\D/g, "");
+  const certEid = digits(leave.extracted.emirates_id);
+  const mismatch = !!certEid && !!leave.customer && digits(leave.customer.emirates_id) !== certEid;
+  const to = leave.otp?.sent_to ?? "";
+
+  const send = async (confirmed = false) => {
+    if (mismatch && !confirmed) {
+      setConfirming(true);
+      return;
+    }
+    setConfirming(false);
+    setBusy(true);
+    setError(null);
+    try {
+      const l = await api<LeaveDetail>(`/leaves/${leave.id}/sheet/send`, { body: { confirm_mismatch: confirmed } });
+      onUpdate(l);
+      toast.success("Sick leave sheet sent", `Emailed to ${l.sheet?.sent_to}`);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3 border-t border-line px-5 py-4">
+      {error && <Alert tone="bad">{error}</Alert>}
+      <Button variant={leave.sheet ? "secondary" : "primary"} size="lg" className="w-full" loading={busy} onClick={() => send()} icon={<Send className="size-4" />}>
+        {leave.sheet ? "Send sheet again" : "Send sheet"}
+      </Button>
+      <p className="text-center text-[12.5px] leading-relaxed text-muted">
+        {leave.sheet ? `Sent to ${leave.sheet.sent_to} on ${fmtDateTime(leave.sheet.sent_at)}` : `Emails the uploaded sick leave sheet to ${to}`}
+      </p>
+      <Modal
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        title="Emirates ID does not match"
+        description="The certificate shows a different Emirates ID from this customer. Check the document before emailing it."
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirming(false)} data-autofocus>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={() => send(true)}>
+              Send anyway
+            </Button>
+          </>
+        }
+      >
+        <p className="text-[13.5px] text-ink-2">
+          The sheet will be emailed to <span className="font-medium text-ink">{to}</span> ({leave.customer?.full_name}).
+        </p>
+      </Modal>
+    </div>
   );
 }
 

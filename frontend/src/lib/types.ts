@@ -87,6 +87,7 @@ export interface LeaveDetail extends LeaveSummary {
   match_score: number | null;
   verified_by: string | null;
   otp: OtpState | null;
+  sheet: { sent_at: string; sent_to: string } | null;
   candidates: Candidate[];
   dev_code?: string;
 }

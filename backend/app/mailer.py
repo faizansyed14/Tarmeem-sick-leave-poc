@@ -4,11 +4,13 @@ SMTP (for example Gmail) is used when SMTP_EMAIL and SMTP_PASSWORD are set,
 otherwise Microsoft Graph when the GRAPH_* values are set.
 """
 
+import base64
 import logging
 import smtplib
 import ssl
 import threading
 import time
+from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
 from html import escape
@@ -53,7 +55,18 @@ def _graph_token() -> str:
         return _token["value"]
 
 
-def _send_smtp(to: str, subject: str, html: str, text: str) -> None:
+@dataclass
+class Attachment:
+    filename: str
+    content: bytes
+    content_type: str
+
+
+# Microsoft Graph only accepts small attachments inside a sendMail request
+GRAPH_ATTACHMENT_LIMIT = 3 * 1024 * 1024
+
+
+def _send_smtp(to: str, subject: str, html: str, text: str, attachment: Attachment | None = None) -> None:
     host, port, sender = settings.smtp_host, settings.smtp_port, settings.smtp_email.strip()
     # Google shows app passwords as four groups with spaces
     password = settings.smtp_password.replace(" ", "")
@@ -65,6 +78,9 @@ def _send_smtp(to: str, subject: str, html: str, text: str) -> None:
     msg["Message-ID"] = make_msgid(domain=sender.split("@")[-1])
     msg.set_content(text)
     msg.add_alternative(html, subtype="html")
+    if attachment:
+        maintype, subtype = attachment.content_type.split("/", 1)
+        msg.add_attachment(attachment.content, maintype=maintype, subtype=subtype, filename=attachment.filename)
 
     context = ssl.create_default_context()
     try:
@@ -83,6 +99,9 @@ def _send_smtp(to: str, subject: str, html: str, text: str) -> None:
             if port != 465:
                 smtp.starttls(context=context)
             smtp.login(sender, password)
+            if attachment:
+                # allow time to upload the file on a slow connection
+                smtp.sock.settimeout(60)
             smtp.send_message(msg)
     except smtplib.SMTPAuthenticationError as exc:
         log.error("SMTP sign in failed for %s: %s", sender, exc)
@@ -98,30 +117,40 @@ def _send_smtp(to: str, subject: str, html: str, text: str) -> None:
     log.info("Email sent to %s via SMTP", to)
 
 
-def send_mail(to: str, subject: str, html: str, text: str = "") -> None:
+def send_mail(to: str, subject: str, html: str, text: str = "", attachment: Attachment | None = None) -> None:
     if not settings.mail_enabled:
         if settings.otp_dev_mode:
             log.warning("Email delivery not configured. Email to %s not sent (dev mode). Subject: %s", to, subject)
             return
         raise MailError("Email delivery is not configured. Add the SMTP settings to .env.")
     if settings.smtp_enabled:
-        _send_smtp(to, subject, html, text or subject)
+        _send_smtp(to, subject, html, text or subject, attachment)
         return
+
+    message = {
+        "subject": subject,
+        "body": {"contentType": "HTML", "content": html},
+        "toRecipients": [{"emailAddress": {"address": to}}],
+    }
+    if attachment:
+        if len(attachment.content) > GRAPH_ATTACHMENT_LIMIT:
+            raise MailError("This file is too large to send through Microsoft 365. The limit is 3 MB.")
+        message["attachments"] = [
+            {
+                "@odata.type": "#microsoft.graph.fileAttachment",
+                "name": attachment.filename,
+                "contentType": attachment.content_type,
+                "contentBytes": base64.b64encode(attachment.content).decode("ascii"),
+            }
+        ]
 
     token = _graph_token()
     try:
         resp = httpx.post(
             f"https://graph.microsoft.com/v1.0/users/{settings.graph_sender}/sendMail",
             headers={"Authorization": f"Bearer {token}"},
-            json={
-                "message": {
-                    "subject": subject,
-                    "body": {"contentType": "HTML", "content": html},
-                    "toRecipients": [{"emailAddress": {"address": to}}],
-                },
-                "saveToSentItems": False,
-            },
-            timeout=20,
+            json={"message": message, "saveToSentItems": False},
+            timeout=60 if attachment else 20,
         )
     except httpx.HTTPError as exc:
         raise MailError("Could not reach Microsoft 365. Check the server's internet access.") from exc
@@ -137,6 +166,7 @@ def _layout(heading: str, intro: str, code: str, footer: str) -> str:
         f'border-radius:8px;font-size:22px;font-weight:600;color:#14201F;text-align:center;background:#FFFFFF">{d}</div></td>'
         for d in code
     )
+    code_row = f'<table cellpadding="0" cellspacing="0"><tr>{digits}</tr></table>' if code else ""
     return f"""<!doctype html><html><body style="margin:0;background:#F5F4F0;font-family:Segoe UI,Helvetica,Arial,sans-serif">
 <table width="100%" cellpadding="0" cellspacing="0" style="padding:32px 12px"><tr><td align="center">
 <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;background:#FFFFFF;border:1px solid #E6E3DC;border-radius:14px">
@@ -144,7 +174,7 @@ def _layout(heading: str, intro: str, code: str, footer: str) -> str:
 <div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#0F5C55;font-weight:600">Tarmeem Hospital</div>
 <h1 style="margin:14px 0 8px;font-size:20px;color:#14201F;font-weight:600">{escape(heading)}</h1>
 <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#57534E">{intro}</p>
-<table cellpadding="0" cellspacing="0"><tr>{digits}</tr></table>
+{code_row}
 <p style="margin:20px 0 0;font-size:13px;line-height:1.6;color:#78716C">{footer}</p>
 </td></tr>
 <tr><td style="padding:20px 32px 26px;border-top:1px solid #EFEDE8;margin-top:20px;font-size:12px;color:#A8A29E">
@@ -166,6 +196,21 @@ def send_customer_otp(to: str, name: str, code: str, minutes: int, reference: st
         f"Your verification code is {code}. It expires in {minutes} minutes."
     )
     send_mail(to, f"Your Tarmeem verification code is {code}", html, text)
+
+
+def send_sick_leave_sheet(to: str, name: str, reference: str, attachment: Attachment) -> None:
+    html = _layout(
+        "Your sick leave sheet",
+        f"Dear {escape(name)}, this is your sick leave sheet. The certificate "
+        f"<strong>{escape(reference)}</strong> has been verified and is attached to this email.",
+        "",
+        "Please keep it for your records. If you did not expect this message, contact Tarmeem Hospital.",
+    )
+    text = (
+        f"Dear {name}, this is your sick leave sheet. The certificate {reference} has been verified "
+        "and is attached to this email."
+    )
+    send_mail(to, f"Your sick leave sheet ({reference})", html, text, attachment)
 
 
 def send_login_code(to: str, name: str, code: str, minutes: int) -> None:

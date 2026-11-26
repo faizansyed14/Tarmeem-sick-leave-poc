@@ -122,6 +122,11 @@ def leave_detail(db: Session, leave: SickLeave, candidates: list[dict] | None = 
             "match_score": leave.match_score,
             "verified_by": leave.verified_by.full_name if leave.verified_by else None,
             "otp": otp,
+            "sheet": (
+                {"sent_at": iso(leave.sheet_sent_at), "sent_to": mask_email(leave.sheet_sent_to)}
+                if leave.sheet_sent_at
+                else None
+            ),
             "candidates": [
                 {
                     "customer": customer_out(c["customer"]),

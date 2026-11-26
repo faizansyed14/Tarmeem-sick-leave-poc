@@ -105,6 +105,9 @@ class SickLeave(Base):
     status: Mapped[str] = mapped_column(String(20), default="not_verified", index=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     verified_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # Last time the certificate itself was emailed to the customer
+    sheet_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sheet_sent_to: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

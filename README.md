@@ -108,6 +108,7 @@ To start from an empty database, stop the backend and delete `backend/data/tarme
   * 6 digits, stored only as a hash, valid for 5 minutes, 5 attempts.
   * Resend is allowed after 30 seconds, and resending cancels the earlier code.
 * Status is **Not verified** by default, **Awaiting code** while a code is active, and **Verified** once the customer reads the correct code back.
+* After verification, **Send sheet** emails the uploaded certificate to the address that received the code. This needs email to be set up.
 * Every step is written to the audit log with the user and IP address.
 
 ## Email setup

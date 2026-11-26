@@ -28,6 +28,11 @@ ALLOWED = {
     "docx": (b"PK\x03\x04",),
 }
 
+MEDIA_TYPES = {
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
 
 class LinkIn(BaseModel):
     customer_id: int
@@ -36,6 +41,10 @@ class LinkIn(BaseModel):
 
 class VerifyIn(BaseModel):
     code: str = Field(min_length=4, max_length=8)
+
+
+class SheetIn(BaseModel):
+    confirm_mismatch: bool = False
 
 
 class FieldsIn(BaseModel):
@@ -178,9 +187,8 @@ def get_file(leave_id: int, db: Session = Depends(get_db), _: User = Depends(get
     path = settings.upload_dir / "leaves" / leave.stored_filename
     if not path.exists():
         raise HTTPException(404, "The original file is no longer available.")
-    media = "application/pdf" if leave.file_type == "pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     disposition = "inline" if leave.file_type == "pdf" else "attachment"
-    return FileResponse(path, media_type=media, filename=leave.original_filename, content_disposition_type=disposition)
+    return FileResponse(path, media_type=MEDIA_TYPES[leave.file_type], filename=leave.original_filename, content_disposition_type=disposition)
 
 
 @router.patch("/{leave_id}/fields")
@@ -338,4 +346,37 @@ def verify_otp(leave_id: int, body: VerifyIn, request: Request, db: Session = De
     audit(db, user, "leave_verified", "sick_leave", leave.id, f"{leave.reference} verified with customer {leave.customer.full_name}", request)
     db.commit()
     db.refresh(leave)
+    return leave_detail(db, leave, [])
+
+
+@router.post("/{leave_id}/sheet/send")
+def send_sheet(leave_id: int, body: SheetIn, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Emails the uploaded certificate to the address that confirmed the verification code."""
+    leave = _get(db, leave_id)
+    ch = latest_challenge(db, leave.id)
+    if leave.status != "verified" or not ch or not ch.verified:
+        raise HTTPException(409, "The sheet can only be sent after the certificate is verified.")
+    if not settings.mail_enabled:
+        raise HTTPException(400, "Email delivery is not configured, so the sheet cannot be sent. Add the SMTP settings to .env.")
+    customer = leave.customer
+    if leave.ext_emirates_id and leave.ext_emirates_id != customer.emirates_id and not body.confirm_mismatch:
+        raise HTTPException(409, "The certificate Emirates ID does not match this customer. Confirm to send it anyway.")
+    path = settings.upload_dir / "leaves" / leave.stored_filename
+    if not path.exists():
+        raise HTTPException(404, "The original file is no longer available.")
+
+    attachment = mailer.Attachment(
+        filename=f"Sick_Leave_{leave.reference}.{leave.file_type}",
+        content=path.read_bytes(),
+        content_type=MEDIA_TYPES[leave.file_type],
+    )
+    try:
+        mailer.send_sick_leave_sheet(ch.sent_to, customer.full_name, leave.reference or "", attachment)
+    except mailer.MailError as exc:
+        raise HTTPException(502, str(exc))
+
+    leave.sheet_sent_at = utcnow()
+    leave.sheet_sent_to = ch.sent_to
+    audit(db, user, "sheet_sent", "sick_leave", leave.id, f"{leave.reference} sheet sent to {mask_email(ch.sent_to)}", request)
+    db.commit()
     return leave_detail(db, leave, [])

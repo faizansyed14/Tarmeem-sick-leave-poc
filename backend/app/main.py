@@ -26,6 +26,11 @@ def migrate() -> None:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE sick_leaves ADD COLUMN extraction_method VARCHAR(10) NOT NULL DEFAULT 'text'"))
         log.info("Added sick_leaves.extraction_method column")
+    for column, kind in (("sheet_sent_at", "DATETIME"), ("sheet_sent_to", "VARCHAR(255)")):
+        if column not in leave_columns:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE sick_leaves ADD COLUMN {column} {kind}"))
+            log.info("Added sick_leaves.%s column", column)
 
 
 def bootstrap_admin() -> None:
