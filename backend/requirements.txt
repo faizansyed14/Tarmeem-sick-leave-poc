@@ -1,0 +1,19 @@
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.32
+sqlalchemy>=2.0.36
+pydantic>=2.9
+pydantic-settings>=2.6
+python-multipart>=0.0.18
+pyjwt>=2.10
+bcrypt>=4.2
+pyotp>=2.9
+openpyxl>=3.1.5
+pypdf>=5.1
+python-docx>=1.1.2
+rapidfuzz>=3.10
+httpx>=0.28
+reportlab>=4.2
+# OCR for scanned PDFs (CPU only)
+rapidocr>=3.0
+onnxruntime>=1.20
+pypdfium2>=4.30

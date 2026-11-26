@@ -1,0 +1,35 @@
+# Secrets: passwords, keys and email credentials. Create .env on each machine.
+.env
+.env.*
+!.env.example
+
+# Patient data: uploaded sick leave certificates and the database
+backend/uploads/
+backend/data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Sample files contain fake patient data and should stay local
+samples/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Node and Next.js
+node_modules/
+.next/
+.next-*/
+out/
+*.tsbuildinfo
+
+# Logs, editor and system files
+*.log
+~$*
+.DS_Store
+Thumbs.db
